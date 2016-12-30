@@ -1,0 +1,3 @@
+#!/bin/bash
+
+./jrdwp -mode=client -bind-port=8876 -server-host=localhost -server-port=8877 -ws-origin=http://localhost/ -jdwp-port=5006
