@@ -1,5 +1,5 @@
 # jrdwp
-**J**ava **R**emote **D**ebug through **W**ebsocket **P**roxy is a proxy for Java remote debugging. It likes Microsoft's [azure-websites-java-remote-debugging] (https://github.com/Azure/azure-websites-java-remote-debugging), but includes all of client and server side implementation(**azure-websites-java-remote-debugging repo** only published client side, the serverside is not opensource now).
+**J**ava **R**emote **D**ebugging through **W**ebsocket **P**roxy is a proxy for Java remote debugging. It likes Microsoft's [azure-websites-java-remote-debugging] (https://github.com/Azure/azure-websites-java-remote-debugging), but includes all of client and server side implementation(**azure-websites-java-remote-debugging repo** only published client side, the serverside is not opensource now).
 
 # Prerequisites:
 * Enable websocket endpoint (nginx version >= 1.3)
