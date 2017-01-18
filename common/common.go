@@ -9,9 +9,9 @@ import (
 
 const (
 	//HeaderToken security token
-	HeaderToken = "JRDWP_TOKEN"
+	HeaderToken = "jrdwptoken"
 	//HeaderPort jdwp port
-	HeaderPort = "JDWP_PORT"
+	HeaderPort = "jdwpport"
 	//PublicKeyDir default client key path
 	PublicKeyDir = "."
 	//PublicKeyFile filename
