@@ -98,3 +98,8 @@ jrdwp server will generate .jrdwp_key under the working directory, please copy i
     -jdwp-port int
         jdwp port of remote application (default -1)
 ```
+
+# Security
+* changes public key on server starting, verify token according to timestamp
+* specify "allowed-jdwp-ports" to prevent unexpected intrusions
+* bind jdwp ports to locally ports to prevent ports leaks
