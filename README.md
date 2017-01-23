@@ -35,7 +35,7 @@ location /jrdwp {
 
 ## Start Java application with JDWP
 ```bash
-java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=5005 -jar foo.jar
+java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=127.0.0.1:5005 -jar foo.jar
 ```
 
 ## [Start jrdwp server on remote host] (start-server)
