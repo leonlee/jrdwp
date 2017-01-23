@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/leonlee/jrdwp/common"
 )
 
 //TCPServer for listenning JDWP client
@@ -25,18 +27,22 @@ func NewTCPServer(wsClient *WSClient, port int) *TCPServer {
 //Start start tcp server
 func (server *TCPServer) Start() {
 	addr := fmt.Sprintf(":%d", server.port)
+	tcpAddr, err := net.ResolveTCPAddr("tcp", addr)
+	if err != nil {
+		log.Fatalln("can't resolve addr", addr, err.Error())
+	}
 
-	err := server.listen(addr)
+	err = server.listen(tcpAddr)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 }
 
-func (server *TCPServer) listen(addr string) error {
-	log.Printf("starting tcp server: %s\n", addr)
+func (server *TCPServer) listen(addr *net.TCPAddr) error {
+	log.Printf("starting tcp server: %s\n", addr.String())
 
-	listener, err := net.Listen("tcp", addr)
+	listener, err := net.ListenTCP("tcp", addr)
 	if err != nil {
 		log.Fatal(err)
 		return err
@@ -46,7 +52,7 @@ func (server *TCPServer) listen(addr string) error {
 	return server.accept(listener)
 }
 
-func (server *TCPServer) recoverListen(listener net.Listener, addr string) {
+func (server *TCPServer) recoverListen(listener *net.TCPListener, addr *net.TCPAddr) {
 	err := recover()
 	if err != nil {
 		log.Printf("got panic by: %v\n", err)
@@ -60,9 +66,9 @@ func (server *TCPServer) recoverListen(listener net.Listener, addr string) {
 	server.listen(addr)
 }
 
-func (server *TCPServer) accept(listener net.Listener) error {
+func (server *TCPServer) accept(listener *net.TCPListener) error {
 	for {
-		conn, err := listener.Accept()
+		conn, err := listener.AcceptTCP()
 		if err != nil {
 			log.Println(err)
 			return err
@@ -71,7 +77,7 @@ func (server *TCPServer) accept(listener net.Listener) error {
 	}
 }
 
-func (server *TCPServer) handle(conn net.Conn) {
+func (server *TCPServer) handle(conn *net.TCPConn) {
 	var clientConn *websocket.Conn
 
 	defer func() {
@@ -94,11 +100,13 @@ func (server *TCPServer) handle(conn net.Conn) {
 		log.Printf("can't connect to server %s", err.Error())
 	}
 
+	common.InitTCPConn(conn)
+
 	go send(conn, clientConn)
 	go receive(conn, clientConn)
 }
 
-func send(conn net.Conn, clientConn *websocket.Conn) {
+func send(conn *net.TCPConn, clientConn *websocket.Conn) {
 	defer closeConn(conn, clientConn)
 
 	buffer := make([]byte, 256)
@@ -109,7 +117,7 @@ func send(conn net.Conn, clientConn *websocket.Conn) {
 			return
 		}
 
-		//conn.SetReadDeadline(time.Now().Add(time.Second * 50))
+		conn.SetReadDeadline(time.Now().Add(common.DeadlineDuration))
 		read, err = conn.Read(buffer)
 		if err != nil {
 			log.Printf("read tcp fialed: %v\n", err.Error())
@@ -125,7 +133,7 @@ func send(conn net.Conn, clientConn *websocket.Conn) {
 
 }
 
-func receive(conn net.Conn, clientConn *websocket.Conn) {
+func receive(conn *net.TCPConn, clientConn *websocket.Conn) {
 	defer closeConn(conn, clientConn)
 
 	var buffer []byte
@@ -141,7 +149,7 @@ func receive(conn net.Conn, clientConn *websocket.Conn) {
 			return
 		}
 
-		//conn.SetWriteDeadline(time.Now().Add(time.Second * 50))
+		conn.SetWriteDeadline(time.Now().Add(common.DeadlineDuration))
 		_, err := conn.Write(buffer)
 		if err != nil {
 			log.Printf("write tcp failed: %v\n", err.Error())
@@ -150,7 +158,7 @@ func receive(conn net.Conn, clientConn *websocket.Conn) {
 	}
 }
 
-func closeConn(conn net.Conn, clientConn *websocket.Conn) {
+func closeConn(conn *net.TCPConn, clientConn *websocket.Conn) {
 	log.Println("connection was disconnected")
 
 	if err := recover(); err != nil {

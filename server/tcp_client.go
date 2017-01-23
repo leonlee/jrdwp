@@ -16,11 +16,16 @@ func NewTCPClient(server string) *TCPClient {
 	}
 }
 
-func (client *TCPClient) Connect(port int) (net.Conn, error) {
+func (client *TCPClient) Connect(port int) (*net.TCPConn, error) {
 	addr := fmt.Sprintf("%s:%d", client.server, port)
 	log.Printf("connecting tcp server: %s\n", addr)
 
-	conn, err := net.Dial("tcp", addr)
+	tcpAddr, err := net.ResolveTCPAddr("tcp", addr)
+	if err != nil {
+		log.Panicln("can't resolve addr", addr, err.Error())
+	}
+
+	conn, err := net.DialTCP("tcp", nil, tcpAddr)
 	if err != nil {
 		log.Panicf("can't connect to %s:%d : %v", client.server, port, err.Error())
 	}

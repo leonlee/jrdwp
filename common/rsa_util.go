@@ -1,7 +1,6 @@
 package common
 
 import (
-	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -11,17 +10,26 @@ import (
 	"fmt"
 	"log"
 	"reflect"
+	"strconv"
 	"time"
 )
 
-//GenerateSecret generate secret calculated by timestamp
+//GenerateSecret generate secret calculated by unixtime without seconds
 func GenerateSecret() []byte {
-	now := time.Now()
-	minutes := now.Round(time.Minute)
-	seconds := minutes.Unix()
-	secret := fmt.Sprintf("%d", seconds)
+	secret := fmt.Sprintf("%d", time.Now().Unix())
 
 	return []byte(secret)
+}
+
+//ParseSecret parse secret to unixtime
+func ParseSecret(secret []byte) int64 {
+	str := string(secret)
+	unixtime, err := strconv.ParseInt(str, 10, 64)
+	if err != nil {
+		log.Println("bad unixtime", str, err.Error())
+		return 0
+	}
+	return unixtime
 }
 
 //GenerateKey generate encrypt key
@@ -104,7 +112,9 @@ func VerifyToken(key *rsa.PrivateKey, token string) bool {
 		log.Println("can't decrypt token", err.Error())
 		return false
 	}
-	secret := GenerateSecret()
 
-	return bytes.Compare(secret, plaintext) == 0
+	timestamp := ParseSecret(plaintext)
+	unixtime := time.Now().Unix()
+
+	return timestamp >= unixtime-60
 }

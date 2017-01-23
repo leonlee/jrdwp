@@ -2,9 +2,11 @@ package common
 
 import (
 	"log"
+	"net"
 	"path"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -17,6 +19,8 @@ const (
 	//PublicKeyFile filename
 	PublicKeyFile = ".jrdwp_key"
 )
+
+var DeadlineDuration = time.Second * 60 * 30
 
 //PublicKeyPath concat file path of client key
 func PublicKeyPath() string {
@@ -37,4 +41,12 @@ func SplitToInt(commaDelimitedString string) []int {
 	}
 
 	return ports
+}
+
+//InitTCPConn initialize tcp connection to keep alive
+func InitTCPConn(conn *net.TCPConn) {
+	conn.SetKeepAlive(true)
+	conn.SetNoDelay(true)
+	conn.SetLinger(3)
+	conn.SetDeadline(time.Now().Add(DeadlineDuration))
 }

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/leonlee/jrdwp/common"
@@ -84,7 +85,7 @@ func (server *WSServer) listen(addr string) {
 
 func (server *WSServer) onMessage(w http.ResponseWriter, request *http.Request) {
 	var conn *websocket.Conn
-	var clientConn net.Conn
+	var clientConn *net.TCPConn
 	server.jdwpPort = -1
 
 	var upgrader = websocket.Upgrader{
@@ -116,6 +117,8 @@ func (server *WSServer) onMessage(w http.ResponseWriter, request *http.Request) 
 	if err != nil {
 		log.Panicln("can't connect to jvm:", err)
 	}
+
+	common.InitTCPConn(clientConn)
 
 	go send(conn, clientConn)
 	go receive(conn, clientConn)
@@ -151,7 +154,7 @@ func (server *WSServer) checkAndExtract(req *http.Request) bool {
 	}
 }
 
-func send(conn *websocket.Conn, clientConn net.Conn) {
+func send(conn *websocket.Conn, clientConn *net.TCPConn) {
 	defer closeConn(conn, clientConn)
 
 	var buffer []byte
@@ -167,7 +170,7 @@ func send(conn *websocket.Conn, clientConn net.Conn) {
 			return
 		}
 
-		//clientConn.SetWriteDeadline(time.Now().Add(time.Second * 5))
+		clientConn.SetWriteDeadline(time.Now().Add(common.DeadlineDuration))
 		_, err = clientConn.Write(buffer)
 		if err != nil {
 			log.Printf("write tcp failed: %v\n", err.Error())
@@ -176,7 +179,7 @@ func send(conn *websocket.Conn, clientConn net.Conn) {
 	}
 }
 
-func receive(conn *websocket.Conn, clientConn net.Conn) {
+func receive(conn *websocket.Conn, clientConn *net.TCPConn) {
 	defer closeConn(conn, clientConn)
 
 	buffer := make([]byte, 256)
@@ -187,7 +190,7 @@ func receive(conn *websocket.Conn, clientConn net.Conn) {
 			return
 		}
 
-		//clientConn.SetReadDeadline(time.Now().Add(time.Second * 5))
+		clientConn.SetReadDeadline(time.Now().Add(common.DeadlineDuration))
 		read, err = clientConn.Read(buffer)
 		if err != nil {
 			log.Printf("read tcp failed: %v\n", err.Error())
@@ -202,7 +205,7 @@ func receive(conn *websocket.Conn, clientConn net.Conn) {
 	}
 }
 
-func closeConn(conn *websocket.Conn, clientConn net.Conn) {
+func closeConn(conn *websocket.Conn, clientConn *net.TCPConn) {
 	log.Println("connection was disconnected")
 
 	if err := recover(); err != nil {
