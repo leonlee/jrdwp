@@ -77,6 +77,8 @@ jrdwp server will generate .jrdwp_key under the working directory, please copy i
         websocket request origin header
     -ws-path string
         websocket server path (default "jrdwp")
+    -server-deadline int
+    	  server deadline in minutes that server will shutdown on deadline, default 60 minutes (default 60)
 ```
 
 ## Flags of jrdwp client
