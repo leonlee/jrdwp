@@ -57,6 +57,7 @@ func (client *WSClient) Connect() (*websocket.Conn, error) {
 	conn, _, err := websocket.DefaultDialer.Dial(url.String(), header)
 	if err != nil {
 		log.Println(err)
+		return nil, err
 	}
 
 	return conn, err

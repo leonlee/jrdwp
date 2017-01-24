@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/leonlee/jrdwp/common"
@@ -41,12 +40,13 @@ func NewWSServer(path string, origin string, port int, jdwpPorts []int, client *
 }
 
 func (server *WSServer) Start() {
-	initKey(server)
-	addr := fmt.Sprintf(":%d", server.port)
+	if err := initKey(server); err != nil {
+		log.Fatalln("can't start ws server", err.Error())
+	}
 
+	addr := fmt.Sprintf(":%d", server.port)
 	log.Printf("starting ws server: %s\n", addr)
 	log.Printf("ws path: %s\n", server.path)
-
 	server.listen(addr)
 
 	defer func() {
@@ -57,23 +57,28 @@ func (server *WSServer) Start() {
 	}()
 }
 
-func initKey(server *WSServer) {
+func initKey(server *WSServer) error {
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		log.Fatalln("can't generate key", err.Error())
+		log.Println("can't generate key", err.Error())
+		return err
 	}
 	server.key = privateKey
 
 	publicKeyBytes, err := common.PublicKeyToBytes(&privateKey.PublicKey)
 	if err != nil {
-		log.Fatalln("can't convert public key to bytes", err.Error())
+		log.Println("can't convert public key to bytes", err.Error())
+		return err
 	}
 	log.Printf("generated public key:\n\n%s\n", publicKeyBytes)
 
 	err = ioutil.WriteFile(common.PublicKeyPath(), publicKeyBytes, 0655)
 	if err != nil {
-		log.Fatalln("can't write public key", common.PublicKeyPath(), err.Error())
+		log.Println("can't write public key", common.PublicKeyPath(), err.Error())
+		return err
 	}
+
+	return nil
 }
 
 func (server *WSServer) listen(addr string) {
@@ -86,27 +91,14 @@ func (server *WSServer) listen(addr string) {
 func (server *WSServer) onMessage(w http.ResponseWriter, request *http.Request) {
 	var conn *websocket.Conn
 	var clientConn *net.TCPConn
-	server.jdwpPort = -1
+
+	defer closeOnFail(conn, clientConn)
 
 	var upgrader = websocket.Upgrader{
 		CheckOrigin: func(req *http.Request) bool {
-			return server.checkAndExtract(req)
+			return server.verifyRequest(req)
 		},
 	}
-
-	defer func() {
-		if err := recover(); err != nil {
-			log.Println("recover from", err)
-			if conn != nil {
-				conn.Close()
-			}
-			if clientConn != nil {
-				clientConn.Close()
-			}
-		}
-	}()
-
-	log.Printf("got connection from %s.\r\n", request.RequestURI)
 
 	conn, err := upgrader.Upgrade(w, request, nil)
 	if err != nil {
@@ -124,7 +116,19 @@ func (server *WSServer) onMessage(w http.ResponseWriter, request *http.Request) 
 	go receive(conn, clientConn)
 }
 
-func (server *WSServer) checkAndExtract(req *http.Request) bool {
+func closeOnFail(conn *websocket.Conn, clientConn *net.TCPConn) {
+	if err := recover(); err != nil {
+		log.Println("recover from", err)
+		if conn != nil {
+			conn.Close()
+		}
+		if clientConn != nil {
+			clientConn.Close()
+		}
+	}
+}
+
+func (server *WSServer) verifyRequest(req *http.Request) bool {
 	port, err := strconv.Atoi(req.Header.Get(common.HeaderPort))
 	if err != nil {
 		log.Println("bad port", err.Error())
@@ -132,20 +136,12 @@ func (server *WSServer) checkAndExtract(req *http.Request) bool {
 	}
 	log.Println("got port", port)
 
-	for _, jdwpPort := range server.jdwpPorts {
-		if port == jdwpPort {
-			server.jdwpPort = port
-			break
-		}
-	}
-
-	if server.jdwpPort == -1 {
+	if !server.allowJdwpPort(port) {
 		log.Println("not allowed port", port)
 		return false
 	}
 
 	token := req.Header.Get(common.HeaderToken)
-	log.Println("got token", token)
 	if common.VerifyToken(server.key, token) {
 		return true
 	} else {
@@ -154,8 +150,18 @@ func (server *WSServer) checkAndExtract(req *http.Request) bool {
 	}
 }
 
+func (server *WSServer) allowJdwpPort(port int) bool {
+	for _, jdwpPort := range server.jdwpPorts {
+		if port == jdwpPort {
+			server.jdwpPort = port
+			return true
+		}
+	}
+	return false
+}
+
 func send(conn *websocket.Conn, clientConn *net.TCPConn) {
-	defer closeConn(conn, clientConn)
+	defer cleanConn(conn, clientConn)
 
 	var buffer []byte
 	var err error
@@ -170,7 +176,6 @@ func send(conn *websocket.Conn, clientConn *net.TCPConn) {
 			return
 		}
 
-		clientConn.SetWriteDeadline(time.Now().Add(common.DeadlineDuration))
 		_, err = clientConn.Write(buffer)
 		if err != nil {
 			log.Printf("write tcp failed: %v\n", err.Error())
@@ -180,7 +185,7 @@ func send(conn *websocket.Conn, clientConn *net.TCPConn) {
 }
 
 func receive(conn *websocket.Conn, clientConn *net.TCPConn) {
-	defer closeConn(conn, clientConn)
+	defer cleanConn(conn, clientConn)
 
 	buffer := make([]byte, 256)
 	var read = 0
@@ -190,7 +195,6 @@ func receive(conn *websocket.Conn, clientConn *net.TCPConn) {
 			return
 		}
 
-		clientConn.SetReadDeadline(time.Now().Add(common.DeadlineDuration))
 		read, err = clientConn.Read(buffer)
 		if err != nil {
 			log.Printf("read tcp failed: %v\n", err.Error())
@@ -205,7 +209,7 @@ func receive(conn *websocket.Conn, clientConn *net.TCPConn) {
 	}
 }
 
-func closeConn(conn *websocket.Conn, clientConn *net.TCPConn) {
+func cleanConn(conn *websocket.Conn, clientConn *net.TCPConn) {
 	log.Println("connection was disconnected")
 
 	if err := recover(); err != nil {

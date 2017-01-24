@@ -25,18 +25,21 @@ func NewTCPServer(wsClient *WSClient, port int) *TCPServer {
 }
 
 //Start start tcp server
-func (server *TCPServer) Start() {
+func (server *TCPServer) Start() error {
 	addr := fmt.Sprintf(":%d", server.port)
 	tcpAddr, err := net.ResolveTCPAddr("tcp", addr)
 	if err != nil {
-		log.Fatalln("can't resolve addr", addr, err.Error())
+		log.Println("can't resolve addr", addr, err.Error())
+		return err
 	}
 
 	err = server.listen(tcpAddr)
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
+		return err
 	}
 
+	return nil
 }
 
 func (server *TCPServer) listen(addr *net.TCPAddr) error {
@@ -44,9 +47,10 @@ func (server *TCPServer) listen(addr *net.TCPAddr) error {
 
 	listener, err := net.ListenTCP("tcp", addr)
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 		return err
 	}
+
 	defer server.recoverListen(listener, addr)
 
 	return server.accept(listener)
@@ -79,19 +83,7 @@ func (server *TCPServer) accept(listener *net.TCPListener) error {
 
 func (server *TCPServer) handle(conn *net.TCPConn) {
 	var clientConn *websocket.Conn
-
-	defer func() {
-		if err := recover(); err != nil {
-			log.Println("got err in handle", err)
-
-			if conn != nil {
-				conn.Close()
-			}
-			if clientConn != nil {
-				clientConn.Close()
-			}
-		}
-	}()
+	defer closeOnFail(conn, clientConn)
 
 	log.Printf("got tcp connection from %s.\r\n", conn.RemoteAddr())
 
@@ -106,8 +98,22 @@ func (server *TCPServer) handle(conn *net.TCPConn) {
 	go receive(conn, clientConn)
 }
 
+func closeOnFail(conn *net.TCPConn, clientConn *websocket.Conn) {
+	if err := recover(); err != nil {
+		log.Println("got err in handle", err)
+
+		if conn != nil {
+			conn.Close()
+		}
+		if clientConn != nil {
+			clientConn.Close()
+		}
+	}
+
+}
+
 func send(conn *net.TCPConn, clientConn *websocket.Conn) {
-	defer closeConn(conn, clientConn)
+	defer cleanConn(conn, clientConn)
 
 	buffer := make([]byte, 256)
 	read := 0
@@ -130,11 +136,10 @@ func send(conn *net.TCPConn, clientConn *websocket.Conn) {
 			return
 		}
 	}
-
 }
 
 func receive(conn *net.TCPConn, clientConn *websocket.Conn) {
-	defer closeConn(conn, clientConn)
+	defer cleanConn(conn, clientConn)
 
 	var buffer []byte
 	var err error
@@ -158,7 +163,7 @@ func receive(conn *net.TCPConn, clientConn *websocket.Conn) {
 	}
 }
 
-func closeConn(conn *net.TCPConn, clientConn *websocket.Conn) {
+func cleanConn(conn *net.TCPConn, clientConn *websocket.Conn) {
 	log.Println("connection was disconnected")
 
 	if err := recover(); err != nil {

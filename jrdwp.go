@@ -6,6 +6,7 @@ import (
 	"flag"
 	"io/ioutil"
 	"log"
+	"time"
 
 	"github.com/leonlee/jrdwp/client"
 	"github.com/leonlee/jrdwp/common"
@@ -19,12 +20,15 @@ const (
 	ModeServer = "server"
 	//PortListen default port of tcp server on client or ws server on remote server
 	PortListen = 9876
-	//PortServer default port of ws server on client or JDWP port on remote server
+	//PortServer default port of ws server on client
 	PortServer = 9877
 	//WsPath default websocket server path
 	WsPath = "jrdwp"
 	//DefaultJdwpPorts default enabled ports
 	DefaultJdwpPorts = "5005"
+	//DefaultServerDeadline deadline of jrdwp server in minutes, to reduce risks it will shutdown
+	//on deadline automatically
+	DefaultServerDeadline = 60
 )
 
 //Config configuration struct
@@ -38,6 +42,7 @@ type Config struct {
 	WsOrigin         *string        `json:"wsOrigin"`
 	AllowedJdwpPorts []int          `json:"allowedJdwpPorts"`
 	JdwpPort         *int           `json:"jdwpPort"`
+	ServerDeadline   *int           `json:"serverDeadline"`
 	PublicKey        *rsa.PublicKey `json:"clientKey"`
 }
 
@@ -54,35 +59,20 @@ func main() {
 	start(conf)
 }
 
-func loadKey(conf *Config) {
-	bytes, err := ioutil.ReadFile(common.PublicKeyPath())
-	if err != nil {
-		log.Fatalln("Can't reade public key", err.Error())
-	}
-
-	conf.PublicKey = common.ParsePublicKey(bytes)
-
-	publicKeyBytes, err := common.PublicKeyToBytes(conf.PublicKey)
-	if err != nil {
-		log.Fatalln("can't parse public key", err.Error())
-	}
-
-	log.Printf("loaded key\n\n%s\n", string(publicKeyBytes))
-}
-
 func parseFlags() *Config {
 	log.Printf("initializing with %v ...", flag.Args())
 
 	conf := &Config{}
 	conf.Mode = flag.String("mode", ModeClient, "jrdwp mode, \"client\" or \"server\"")
-	conf.BindHost = flag.String("bind-host", "", "bind host, default ''")
+	conf.BindHost = flag.String("bind-host", "", "bind host, default \"\"")
 	conf.BindPort = flag.Int("bind-port", PortListen, "bind port, default 9876")
 	conf.ServerHost = flag.String("server-host", "", "server host")
 	conf.ServerPort = flag.Int("server-port", PortServer, "server port, default 9877")
-	conf.WsPath = flag.String("ws-path", WsPath, "websocket server path")
-	conf.WsOrigin = flag.String("ws-origin", "", "websocket request origin header")
-	conf.JdwpPort = flag.Int("jdwp-port", -1, "jdwp port of remote application")
-	jdwpPortsText := flag.String("allowed-jdwp-ports", "", "allowed jdwp ports likes: \"5005,5006\"")
+	conf.WsPath = flag.String("ws-path", WsPath, "websocket server path, default \"/jrdwp\"")
+	conf.WsOrigin = flag.String("ws-origin", "", "websocket request origin header, default \"\"")
+	conf.JdwpPort = flag.Int("jdwp-port", -1, "jdwp port of remote application, mandatory")
+	conf.ServerDeadline = flag.Int("server-deadline", DefaultServerDeadline, "server deadline in minutes that server will shutdown on deadline, default 60 minutes")
+	jdwpPortsText := flag.String("allowed-jdwp-ports", "", "allowed jdwp ports likes: \"5005,5006\", mandatory")
 	flag.Parse()
 
 	if *conf.Mode == ModeServer {
@@ -105,11 +95,12 @@ func parseFlags() *Config {
 func start(conf *Config) {
 	log.Println("starting jrdwp...")
 
-	if *conf.Mode == ModeClient {
+	switch *conf.Mode {
+	case ModeClient:
 		startClient(conf)
-	} else if *conf.Mode == ModeServer {
+	case ModeServer:
 		startServer(conf)
-	} else {
+	default:
 		log.Fatalf("bad mode %s\n", *conf.Mode)
 	}
 
@@ -118,13 +109,57 @@ func start(conf *Config) {
 
 func startClient(conf *Config) {
 	loadKey(conf)
-	wsClient := client.NewWSClient(*conf.ServerHost, *conf.ServerPort, *conf.WsPath, *conf.WsOrigin, *conf.JdwpPort, conf.PublicKey)
+
+	wsClient := client.NewWSClient(
+		*conf.ServerHost,
+		*conf.ServerPort,
+		*conf.WsPath,
+		*conf.WsOrigin,
+		*conf.JdwpPort,
+		conf.PublicKey)
+
 	tcpServer := client.NewTCPServer(wsClient, *conf.BindPort)
-	tcpServer.Start()
+	if err := tcpServer.Start(); err != nil {
+		log.Fatalln("can't start tcp server", err.Error())
+	}
 }
 
 func startServer(conf *Config) {
 	tcpClient := server.NewTCPClient(*conf.ServerHost)
-	wsServer := server.NewWSServer(*conf.WsPath, *conf.WsOrigin, *conf.BindPort, conf.AllowedJdwpPorts, tcpClient)
+	wsServer := server.NewWSServer(*conf.WsPath,
+		*conf.WsOrigin,
+		*conf.BindPort,
+		conf.AllowedJdwpPorts,
+		tcpClient)
+
+	startDeadlineTimer(*conf.ServerDeadline)
 	wsServer.Start()
+}
+
+func startDeadlineTimer(deadline int) {
+	time.AfterFunc(time.Duration(deadline)*time.Minute, func() {
+		goodbye := `
+ _________________________________________
+< Bug's life was short, long live Gopher! >
+ -----------------------------------------
+        \   ^__^
+         \  (oo)\_______
+            (__)\       )\/\
+                ||----w |
+                ||     ||
+`
+		log.Fatalln(goodbye)
+	})
+}
+
+func loadKey(conf *Config) {
+	bytes, err := ioutil.ReadFile(common.PublicKeyPath())
+	if err != nil {
+		log.Fatalln("Can't read public key", err.Error())
+	}
+
+	conf.PublicKey, err = common.ParsePublicKey(bytes)
+	if err != nil {
+		log.Fatalln("can't parse public key", err.Error())
+	}
 }

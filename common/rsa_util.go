@@ -7,11 +7,19 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"log"
 	"reflect"
 	"strconv"
 	"time"
+)
+
+var (
+	//ErrBadKey error of bad key
+	ErrBadKey = errors.New("bad key")
+	//ErrUnsupportedKey unsupported key type
+	ErrUnsupportedKey = errors.New("unsupported key type, please use RSA key")
 )
 
 //GenerateSecret generate secret calculated by unixtime without seconds
@@ -53,23 +61,26 @@ func EncryptSecret(key *rsa.PublicKey, secret []byte) []byte {
 }
 
 //ParsePublicKey parse rsa public key
-func ParsePublicKey(bytes []byte) *rsa.PublicKey {
+func ParsePublicKey(bytes []byte) (*rsa.PublicKey, error) {
 	block, _ := pem.Decode(bytes)
 	if block == nil {
-		log.Fatalln("can't decode pem", string(bytes))
+		log.Println("can't decode pem", string(bytes))
+		return nil, ErrBadKey
 	}
 
 	key, err := x509.ParsePKIXPublicKey(block.Bytes)
 	if err != nil {
-		log.Fatalln("can't parse public key", err.Error())
+		log.Println("can't parse public key", err.Error())
+		return nil, err
 	}
 
 	rsaKey, ok := key.(*rsa.PublicKey)
 	if !ok {
-		log.Fatalln("invalid public key", reflect.TypeOf(key))
+		log.Println("invalid public key", reflect.TypeOf(key))
+		return nil, ErrUnsupportedKey
 	}
 
-	return rsaKey
+	return rsaKey, nil
 }
 
 //PublicKeyToBytes convert rsa.PublicKey to bytes
