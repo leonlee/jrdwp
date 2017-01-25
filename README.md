@@ -5,6 +5,9 @@
 * Enable websocket endpoint (nginx version >= 1.3)
 * JDWP compatible debugger like Eclipse/Netbeans
 
+# Downloads
+https://github.com/leonlee/jrdwp/releases
+
 # Compiling & Building
 ```bash
 #build according to development platform
