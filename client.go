@@ -12,12 +12,21 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+const (
+	// keepAliveInterval keeps sessions idle at a breakpoint alive through
+	// proxies that drop connections after 60 idle seconds, the nginx and AWS
+	// load balancer default.
+	keepAliveInterval = 30 * time.Second
+	pingTimeout       = 10 * time.Second
+)
+
 // client accepts debugger connections and tunnels each one to the jrdwp server.
 type client struct {
-	url      string
-	origin   string
-	jdwpPort int
-	secret   []byte
+	url          string
+	origin       string
+	jdwpPort     int
+	secret       []byte
+	pingInterval time.Duration
 }
 
 func runClient(conf config) error {
@@ -30,7 +39,13 @@ func runClient(conf config) error {
 		Host:   net.JoinHostPort(conf.serverHost, strconv.Itoa(conf.serverPort)),
 		Path:   conf.wsPath,
 	}
-	c := &client{url: wsURL.String(), origin: conf.wsOrigin, jdwpPort: conf.jdwpPort, secret: secret}
+	c := &client{
+		url:          wsURL.String(),
+		origin:       conf.wsOrigin,
+		jdwpPort:     conf.jdwpPort,
+		secret:       secret,
+		pingInterval: keepAliveInterval,
+	}
 
 	ln, err := net.Listen("tcp", net.JoinHostPort(conf.bindHost, strconv.Itoa(conf.bindPort)))
 	if err != nil {
@@ -58,7 +73,39 @@ func (c *client) handle(conn net.Conn) {
 		conn.Close()
 		return
 	}
+	stop := keepAlive(ws, c.pingInterval)
 	pipe(ws, conn)
+	stop()
+}
+
+// keepAlive pings the server every interval until stop is called. The server's
+// default ping handler answers with a pong, so both directions see traffic. A
+// failed ping closes ws, which ends the session. stop waits for the pinging
+// goroutine to exit.
+func keepAlive(ws *websocket.Conn, interval time.Duration) (stop func()) {
+	done := make(chan struct{})
+	exited := make(chan struct{})
+	go func() {
+		defer close(exited)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				if err := ws.WriteControl(websocket.PingMessage, nil, time.Now().Add(pingTimeout)); err != nil {
+					log.Printf("keepalive ping failed: %v", err)
+					ws.Close()
+					return
+				}
+			}
+		}
+	}()
+	return func() {
+		close(done)
+		<-exited
+	}
 }
 
 func (c *client) dial() (*websocket.Conn, error) {

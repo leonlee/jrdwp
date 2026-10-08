@@ -19,6 +19,10 @@ make build
 make linux
 #build with GOOS=windows GOARCH=386 CGO_ENABLED=0 for windows platform
 make windows
+#build linux, macOS and windows binaries into dist/
+make release
+#print the version stamped from git, e.g. v0.3.0
+./jrdwp -version
 ```
 
 # Usage
@@ -36,7 +40,8 @@ location /jrdwp {
   proxy_http_version 1.1;
   proxy_set_header Upgrade $http_upgrade;
   proxy_set_header Connection "upgrade";
-  #a session paused at a breakpoint sends nothing, don't let nginx drop it after 60s
+  #the client pings every 30s, which covers the default 60s; this is a fallback
+  #for a session paused at a breakpoint, which sends no JDWP data
   proxy_read_timeout 3600s;
 }
 ```
@@ -52,13 +57,15 @@ java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=127.0.0.1:500
 ```
 
 ## Copy the key from remote host
-On every start, jrdwp server writes a new random key to .jrdwp_key (mode 0600) in its working directory. Copy that file to the jrdwp client's working directory. The key is not printed to the log, and anyone who has it can open a debug session, so treat it like a password.
+On every start, jrdwp server writes a new random key to .jrdwp_key (mode 0600) in its working directory. Copy that file to the jrdwp client's working directory, or put its contents in the client's `JRDWP_KEY` environment variable, which takes precedence over the file. The key is not printed to the log, and anyone who has it can open a debug session, so treat it like a password.
 
 ## [Start jrdwp client on local box] (start-client)
 ```bash
 ./jrdwp -mode=client -bind-port=9876 -server-host=java.remote.com -server-port=80 -ws-origin=http://java.remote.com/ -jdwp-port=5005 -ws-path=jrdwp
 ```
 If nginx serves TLS, use `-ws-scheme=wss -server-port=443` so the token and debug traffic are encrypted.
+Behind a corporate proxy, the client honors `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY`.
+
 ## Open IDEA/Eclipse to connect to jrdwp client on localhost:9876
 ```bash
  _________________
@@ -88,6 +95,8 @@ If nginx serves TLS, use `-ws-scheme=wss -server-port=443` so the token and debu
         websocket path (default "jrdwp")
     -server-deadline int
         shut down after this many minutes (default 60)
+    -version
+        print version and exit
 ```
 
 ## Flags of jrdwp client
@@ -110,16 +119,20 @@ If nginx serves TLS, use `-ws-scheme=wss -server-port=443` so the token and debu
         Origin header to send, optional
     -jdwp-port int
         JDWP port of the remote JVM, required
+    -version
+        print version and exit
 ```
+The client reads its key from `JRDWP_KEY` if set, otherwise from .jrdwp_key.
 
 # Security
 * the server makes a new random key on every start and shuts down after `-server-deadline` minutes
 * every connection carries an HMAC-SHA256 token bound to the JDWP port, valid for 60 seconds either side of the server's clock (keep clocks in sync)
-* a token can be replayed until it expires, so use `-ws-scheme wss` on untrusted networks
+* each token opens one connection: the server refuses a token it has already accepted
+* still use `-ws-scheme wss` on untrusted networks: plain ws exposes the debug traffic, and whoever uses a captured token first gets the connection
 * specify "allowed-jdwp-ports" to prevent unexpected intrusions
 * both sides listen on 127.0.0.1 by default; bind the JVM's JDWP port to 127.0.0.1 too
 
 # Upgrading from v0.2.0 or earlier
-* The key file and token format changed. Upgrade client and server together, and copy the new .jrdwp_key after the server starts.
+* The key file and token format changed. Upgrade client and server together, and copy the new .jrdwp_key (or set `JRDWP_KEY`) after the server starts.
 * Both sides now listen on 127.0.0.1 by default. Pass `-bind-host 0.0.0.0` if the server is reached without a proxy on the same host.
 * `-ws-origin` is now optional.

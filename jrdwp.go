@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"runtime/debug"
 	"strconv"
 	"strings"
 )
@@ -31,11 +32,16 @@ type config struct {
 }
 
 func main() {
+	showVersion := flag.Bool("version", false, "print version and exit")
 	conf, err := parseFlags()
+	if *showVersion {
+		fmt.Println(version())
+		return
+	}
 	if err != nil {
 		log.Fatalln(err)
 	}
-	log.Printf("starting jrdwp: %+v", conf)
+	log.Printf("starting jrdwp %s: %+v", version(), conf)
 
 	if conf.mode == modeServer {
 		err = runServer(conf)
@@ -102,6 +108,15 @@ func parsePorts(text string) ([]int, error) {
 		ports = append(ports, port)
 	}
 	return ports, nil
+}
+
+// version is the module version go build stamped into the binary: the tag for a
+// tagged commit, otherwise a pseudo-version, with +dirty for uncommitted changes.
+func version() string {
+	if info, ok := debug.ReadBuildInfo(); ok {
+		return info.Main.Version
+	}
+	return "unknown"
 }
 
 func validPort(port int) bool {

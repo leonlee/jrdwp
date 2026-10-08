@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 var testSecret = []byte("test-secret-test-secret-test-sec")
@@ -56,10 +58,11 @@ func startServer(t *testing.T, allowedPorts []int) string {
 }
 
 // startClient returns the address where a debugger connects to a jrdwp client.
+// It pings every few milliseconds, so every session's data runs alongside pings.
 func startClient(t *testing.T, wsURL string, jdwpPort int) string {
 	t.Helper()
 	ln := listen(t)
-	go (&client{url: wsURL, jdwpPort: jdwpPort, secret: testSecret}).serve(ln)
+	go (&client{url: wsURL, jdwpPort: jdwpPort, secret: testSecret, pingInterval: 5 * time.Millisecond}).serve(ln)
 	return ln.Addr().String()
 }
 
@@ -87,6 +90,7 @@ func dialDebugger(t *testing.T, addr string) net.Conn {
 func TestRoundTrip(t *testing.T) {
 	jvm := startJVM(t, "")
 	conn := dialDebugger(t, startClient(t, startServer(t, []int{jvm.port}), jvm.port))
+	time.Sleep(50 * time.Millisecond) // idle, as at a breakpoint, while pings flow
 
 	payload := make([]byte, 200_000)
 	rand.Read(payload)
@@ -191,5 +195,138 @@ func TestServerBindFailureKeepsKey(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(keyFile); string(got) != "live\n" {
 		t.Errorf("key file is %q, want the running server's key kept", got)
+	}
+}
+
+func TestReplayedTokenRejected(t *testing.T) {
+	jvm := startJVM(t, "")
+	wsURL := startServer(t, []int{jvm.port})
+	header := http.Header{}
+	header.Set(headerToken, makeToken(testSecret, jvm.port, time.Now()))
+	header.Set(headerPort, strconv.Itoa(jvm.port))
+
+	ws, _, err := websocket.DefaultDialer.Dial(wsURL, header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+	_, resp, err := websocket.DefaultDialer.Dial(wsURL, header)
+	if err == nil || resp == nil || resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("replayed token: got %v, want 403", err)
+	}
+}
+
+// wsServer returns the URL of a websocket server that runs handler on each
+// upgraded connection.
+func wsServer(t *testing.T, handler func(*websocket.Conn)) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if ws, err := upgrader.Upgrade(w, r, nil); err == nil {
+			defer ws.Close()
+			handler(ws)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return "ws" + strings.TrimPrefix(srv.URL, "http")
+}
+
+func dialWS(t *testing.T, wsURL string) *websocket.Conn {
+	t.Helper()
+	ws, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ws.Close() })
+	return ws
+}
+
+// readUntilClosed is the connection's one reader. Set handlers before calling
+// it. The returned channel closes when the connection does.
+func readUntilClosed(ws *websocket.Conn) <-chan struct{} {
+	closed := make(chan struct{})
+	go func() {
+		defer close(closed)
+		for {
+			if _, _, err := ws.NextReader(); err != nil {
+				return
+			}
+		}
+	}()
+	return closed
+}
+
+func TestKeepAlivePongsWhileIdle(t *testing.T) {
+	ws := dialWS(t, wsServer(t, func(ws *websocket.Conn) {
+		<-readUntilClosed(ws) // runs the default ping handler, which sends pongs
+	}))
+	pongs := make(chan struct{}, 100)
+	ws.SetPongHandler(func(string) error {
+		select {
+		case pongs <- struct{}{}:
+		default:
+		}
+		return nil
+	})
+	readUntilClosed(ws)
+
+	stop := keepAlive(ws, 5*time.Millisecond)
+	defer stop() // returns only after the pinging goroutine exits
+	for i := 0; i < 3; i++ {
+		select {
+		case <-pongs:
+		case <-time.After(5 * time.Second):
+			t.Fatal("no pong while idle")
+		}
+	}
+}
+
+func TestKeepAliveFailedPingEndsSession(t *testing.T) {
+	hold := make(chan struct{})
+	ws := dialWS(t, wsServer(t, func(*websocket.Conn) { <-hold })) // silent, never reads
+	t.Cleanup(func() { close(hold) })
+	closed := readUntilClosed(ws)
+
+	// Writes now fail, but the reader keeps waiting for data that never comes.
+	// Only the failed ping can end the session.
+	if err := ws.UnderlyingConn().(*net.TCPConn).CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	stop := keepAlive(ws, 5*time.Millisecond)
+	defer stop()
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("session still open after a failed ping")
+	}
+}
+
+func TestClientPingsIdleSession(t *testing.T) {
+	pings := make(chan struct{}, 100)
+	sessionDone := make(chan struct{})
+	wsURL := wsServer(t, func(ws *websocket.Conn) {
+		defer close(sessionDone)
+		ws.SetPingHandler(func(string) error {
+			select {
+			case pings <- struct{}{}:
+			default:
+			}
+			return nil
+		})
+		<-readUntilClosed(ws)
+	})
+	debugger := dialDebugger(t, startClient(t, wsURL, 5005))
+
+	for i := 0; i < 3; i++ {
+		select {
+		case <-pings:
+		case <-time.After(5 * time.Second):
+			t.Fatal("client sent no pings while the debugger was idle")
+		}
+	}
+	debugger.Close()
+	select {
+	case <-sessionDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("session stayed open after the debugger left")
 	}
 }

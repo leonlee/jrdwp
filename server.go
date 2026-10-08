@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -40,6 +41,7 @@ type server struct {
 	jvmHost      string
 	allowedPorts []int
 	secret       []byte
+	replays      replayCache
 }
 
 func runServer(conf config) error {
@@ -50,10 +52,7 @@ func runServer(conf config) error {
 	}
 	defer ln.Close()
 
-	secret, err := newSecret()
-	if err != nil {
-		return err
-	}
+	secret := newSecret()
 	if err := writeSecret(keyFile, secret); err != nil {
 		return err
 	}
@@ -75,7 +74,11 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	port, err := s.authorize(r)
 	if err != nil {
 		log.Printf("rejected %s: %v", r.RemoteAddr, err)
-		http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+		status := http.StatusForbidden
+		if errors.Is(err, errReplayCacheFull) {
+			status = http.StatusServiceUnavailable
+		}
+		http.Error(w, http.StatusText(status), status)
 		return
 	}
 
@@ -106,7 +109,12 @@ func (s *server) authorize(r *http.Request) (int, error) {
 	if !slices.Contains(s.allowedPorts, port) {
 		return 0, fmt.Errorf("JDWP port %d is not allowed", port)
 	}
-	if err := verifyToken(s.secret, r.Header.Get(headerToken), port, time.Now()); err != nil {
+	now := time.Now()
+	id, err := verifyToken(s.secret, r.Header.Get(headerToken), port, now)
+	if err != nil {
+		return 0, err
+	}
+	if err := s.replays.add(id, now); err != nil {
 		return 0, err
 	}
 	return port, nil
