@@ -1,23 +1,23 @@
-include go.mk
+APP := jrdwp
 
-.PHONY: build
-build: gomkbuild 
+.PHONY: build release linux windows test clean run
 
-.PHONY: release
-release: gomkbuild gomklinux gomkwindows
+build:
+	go build -o $(APP)
 
-.PHONY: linux
-linux: gomklinux
+release: build linux windows
 
-.PHONY: windows
-windows: gomkwindows
+linux:
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o $(APP).bin
 
-.PHONY: xbuild
-xbuild: gomkxbuild
+windows:
+	GOOS=windows GOARCH=386 CGO_ENABLED=0 go build -o $(APP).exe
 
-.PHONY: clean
-clean: gomkclean
+test:
+	go test -race ./...
 
-.PHONY: run
+clean:
+	rm -f $(APP) $(APP).bin $(APP).exe
+
 run: build
-				./$(APPBIN)
+	./$(APP)

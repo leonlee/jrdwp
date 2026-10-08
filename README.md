@@ -9,7 +9,10 @@
 https://github.com/leonlee/jrdwp/releases
 
 # Compiling & Building
+Requires Go 1.22 or later.
 ```bash
+#run tests
+make test
 #build according to development platform
 make build 
 #build with GOOS=linux GOARCH=amd64 CGO_ENABLED=0 for linux platform
@@ -33,6 +36,8 @@ location /jrdwp {
   proxy_http_version 1.1;
   proxy_set_header Upgrade $http_upgrade;
   proxy_set_header Connection "upgrade";
+  #a session paused at a breakpoint sends nothing, don't let nginx drop it after 60s
+  proxy_read_timeout 3600s;
 }
 ```
 
@@ -46,13 +51,14 @@ java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=127.0.0.1:500
 ./jrdwp -mode server -bind-port 9877 -server-host 127.0.0.1  -allowed-jdwp-ports "5005" -ws-origin http://java.remote.com/
 ```
 
-## Copy public key from remote host
-jrdwp server will generate .jrdwp_key under the working directory, please copy it's content and save as .jrdwp_key to jrdwp client working directory.
+## Copy the key from remote host
+On every start, jrdwp server writes a new random key to .jrdwp_key (mode 0600) in its working directory. Copy that file to the jrdwp client's working directory. The key is not printed to the log, and anyone who has it can open a debug session, so treat it like a password.
 
 ## [Start jrdwp client on local box] (start-client)
 ```bash
-./jrdwp -mode=client -bind-port=9876 -server-host=java.remote.com -server-port=80 -ws-origin=http://java.remote.com/ -jdwp-port=5006 -ws-path=jrdwp
+./jrdwp -mode=client -bind-port=9876 -server-host=java.remote.com -server-port=80 -ws-origin=http://java.remote.com/ -jdwp-port=5005 -ws-path=jrdwp
 ```
+If nginx serves TLS, use `-ws-scheme=wss -server-port=443` so the token and debug traffic are encrypted.
 ## Open IDEA/Eclipse to connect to jrdwp client on localhost:9876
 ```bash
  _________________
@@ -70,18 +76,18 @@ jrdwp server will generate .jrdwp_key under the working directory, please copy i
 ```bash
     -mode string
         jrdwp mode, "client" or "server" (default "client")
+    -bind-host string
+        bind host, use 0.0.0.0 to listen on all interfaces (default "127.0.0.1")
     -bind-port int
-        bind port, default 9876 (default 9876)
+        bind port (default 9876)
     -allowed-jdwp-ports string
-        allowed jdwp ports likes: "5005,5006"
+        allowed JDWP ports like "5005,5006", required
     -server-host string
-        jdwp server host, default ''
-    -ws-origin string
-        websocket request origin header
+        JVM host (default "", which is localhost)
     -ws-path string
-        websocket server path (default "jrdwp")
+        websocket path (default "jrdwp")
     -server-deadline int
-    	  server deadline in minutes that server will shutdown on deadline, default 60 minutes (default 60)
+        shut down after this many minutes (default 60)
 ```
 
 ## Flags of jrdwp client
@@ -89,22 +95,31 @@ jrdwp server will generate .jrdwp_key under the working directory, please copy i
     -mode string
         jrdwp mode, "client" or "server" (default "client")
     -bind-host string
-        bind host, default ''
+        bind host, use 0.0.0.0 to listen on all interfaces (default "127.0.0.1")
     -bind-port int
-        bind port, default 9876 (default 9876)
+        bind port (default 9876)
     -server-host string
-        remote server host
+        jrdwp server host
     -server-port int
-        remote server port, default 9877 (default 9877)
-    -ws-origin string
-        websocket request origin header
+        jrdwp server port (default 9877)
+    -ws-scheme string
+        "ws" or "wss" (default "ws")
     -ws-path string
-        websocket server path (default "jrdwp")
+        websocket path (default "jrdwp")
+    -ws-origin string
+        Origin header to send, optional
     -jdwp-port int
-        jdwp port of remote application (default -1)
+        JDWP port of the remote JVM, required
 ```
 
 # Security
-* changes public key on server starting, verify token according to timestamp
+* the server makes a new random key on every start and shuts down after `-server-deadline` minutes
+* every connection carries an HMAC-SHA256 token bound to the JDWP port, valid for 60 seconds either side of the server's clock (keep clocks in sync)
+* a token can be replayed until it expires, so use `-ws-scheme wss` on untrusted networks
 * specify "allowed-jdwp-ports" to prevent unexpected intrusions
-* bind jdwp ports to locally ports to prevent ports leaks
+* both sides listen on 127.0.0.1 by default; bind the JVM's JDWP port to 127.0.0.1 too
+
+# Upgrading from v0.2.0 or earlier
+* The key file and token format changed. Upgrade client and server together, and copy the new .jrdwp_key after the server starts.
+* Both sides now listen on 127.0.0.1 by default. Pass `-bind-host 0.0.0.0` if the server is reached without a proxy on the same host.
+* `-ws-origin` is now optional.
