@@ -179,14 +179,7 @@ func TestFailedUpgradeClosesJVMConnection(t *testing.T) {
 }
 
 func TestServerBindFailureKeepsKey(t *testing.T) {
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(t.TempDir()); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Chdir(wd) })
+	t.Chdir(t.TempDir())
 	if err := os.WriteFile(keyFile, []byte("live\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}

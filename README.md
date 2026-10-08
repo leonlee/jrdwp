@@ -9,7 +9,7 @@
 https://github.com/leonlee/jrdwp/releases
 
 # Compiling & Building
-Requires Go 1.22 or later.
+Requires Go 1.26 or later.
 ```bash
 #run tests
 make test
