@@ -36,7 +36,7 @@ map $http_upgrade $connection_upgrade {
 
 #add websocket location likes:
 location /jrdwp {
-  proxy_pass http://localhost:9877;
+  proxy_pass http://127.0.0.1:9877;
   proxy_http_version 1.1;
   proxy_set_header Upgrade $http_upgrade;
   proxy_set_header Connection "upgrade";
@@ -53,7 +53,7 @@ java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=127.0.0.1:500
 
 ## [Start jrdwp server on remote host] (start-server)
 ```bash
-./jrdwp -mode server -bind-port 9877 -server-host 127.0.0.1  -allowed-jdwp-ports "5005" -ws-origin http://java.remote.com/
+./jrdwp -mode server -bind-port 9877 -server-host 127.0.0.1  -allowed-jdwp-ports "5005"
 ```
 
 ## Copy the key from remote host
@@ -135,4 +135,6 @@ The client reads its key from `JRDWP_KEY` if set, otherwise from .jrdwp_key.
 # Upgrading from v0.2.0 or earlier
 * The key file and token format changed. Upgrade client and server together, and copy the new .jrdwp_key (or set `JRDWP_KEY`) after the server starts.
 * Both sides now listen on 127.0.0.1 by default. Pass `-bind-host 0.0.0.0` if the server is reached without a proxy on the same host.
-* `-ws-origin` is now optional.
+* `-ws-origin` is now optional, and the server ignores it.
+* Building from source requires Go 1.26 or later.
+* `make release` now builds every platform into `dist/` as `jrdwp_<os>_<arch>[.exe]` instead of producing `jrdwp`, `jrdwp.bin` and `jrdwp.exe`. Use `make build`, `make linux` (`jrdwp.bin`) and `make windows` (`jrdwp.exe`) for the old outputs. The `xbuild` target is gone.
